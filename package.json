@@ -1,0 +1,42 @@
+{
+  "name": "github-year",
+  "version": "1.0.0",
+  "description": "Get GitHub user year summary.",
+  "main": "index.js",
+  "dependencies": {
+    "chalk": "^1.1.1",
+    "cheerio": "^0.19.0",
+    "cli-table": "^0.3.1",
+    "node-status": "^0.1.6",
+    "pinkie-promise": "^2.0.0",
+    "request": "^2.67.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "mocha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inikulin/github-year.git"
+  },
+  "keywords": [
+    "GitHub",
+    "stats",
+    "statistics",
+    "year",
+    "summary",
+    "contribution",
+    "contributions",
+    "commits",
+    "commit",
+    "PR",
+    "pull",
+    "requests"
+  ],
+  "author": "Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/inikulin/github-year/issues"
+  },
+  "homepage": "https://github.com/inikulin/github-year#readme"
+}
