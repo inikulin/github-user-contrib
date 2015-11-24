@@ -4,13 +4,16 @@ var Table       = require('cli-table');
 var cheerio     = require('cheerio');
 var chalk       = require('chalk');
 var request     = require('request');
-var split       = require('split-array');
 var format      = require('util').format;
+var moment      = require('moment');
 
-var CONTRIB_CALENDAR_URL_TMPL = 'https://github.com/users/%s/contributions';
-var CONTRIB_MONTH_URL_TMPL    = 'https://github.com/%s?tab=contributions&from=%s&to=%s';
+require('moment-range');
 
-var DAY_SELECTOR          = 'rect.day';
+var CONTRIB_CHUNK_URL_TMPL = 'https://github.com/%s?tab=contributions&from=%s&to=%s';
+var DATES_PER_CHUNK        = 31;
+
+var DATE_FORMAT = 'YYYY-MM-DD';
+
 var HEADER_SELECTOR       = 'h3.conversation-list-heading';
 var LIST_SELECTOR         = '.simple-conversation-list';
 var PROJECT_NAME_SELECTOR = 'span.cmeta';
@@ -76,21 +79,6 @@ function getProjectStats (projectName) {
     return projectStats[projectName];
 }
 
-function getMonthStatsUrls (userPageBody) {
-    var $ = cheerio.load(userPageBody);
-
-    var days = $(DAY_SELECTOR)
-        .map(function (idx, el) {
-            return $(el).attr('data-date');
-        })
-        .get()
-        .sort();
-
-    return split(days, 30).map(function (month) {
-        return format(CONTRIB_MONTH_URL_TMPL, username, month[0], month[month.length - 1]);
-    });
-}
-
 function getListItems ($, headerTextRe) {
     return $(HEADER_SELECTOR)
         .filter(function (idx, el) {
@@ -102,7 +90,7 @@ function getListItems ($, headerTextRe) {
         .find('li');
 }
 
-function parseMonthCommits ($) {
+function parseCommits ($) {
     var $commits = getListItems($, COMMIT_HEADER_TEXT_RE);
 
     $commits.each(function (idx, el) {
@@ -116,7 +104,7 @@ function parseMonthCommits ($) {
     });
 }
 
-function parseMonthPullRequests ($) {
+function parsePullRequests ($) {
     var $prs = getListItems($, PULL_REQUEST_HEADER_TEXT_RE);
 
     pullRequestsTotal += $prs.length;
@@ -129,7 +117,7 @@ function parseMonthPullRequests ($) {
     });
 }
 
-function parseMonthIssues ($) {
+function parseIssues ($) {
     var $issues = getListItems($, ISSUES_HEADER_TEXT_RE);
 
     issuesTotal += $issues.length;
@@ -142,32 +130,56 @@ function parseMonthIssues ($) {
     });
 }
 
-function parseMonthStats (res) {
+function parseChunkStats (res) {
     var $ = cheerio.load(res.body);
 
-    parseMonthCommits($);
-    parseMonthPullRequests($);
-    parseMonthIssues($);
+    parseCommits($);
+    parsePullRequests($);
+    parseIssues($);
 }
 
-function fetchYearStats (calendarPageRes) {
-    var monthUrls = getMonthStatsUrls(calendarPageRes.body);
+function getChunkStatsUrls (from, to) {
+    var range      = moment.range(from, to);
+    var lastDayIdx = range.diff('days') + 1;
+    var idx        = 0;
+    var prev       = null;
+    var urls       = [];
+
+    range.by('days', function (current) {
+        idx++;
+
+        if (idx === 1)
+            prev = current;
+
+        if (idx % DATES_PER_CHUNK === 0 || idx === lastDayIdx) {
+            var url = format(CONTRIB_CHUNK_URL_TMPL, username, prev.format(DATE_FORMAT), current.format(DATE_FORMAT));
+
+            urls.push(url);
+            prev = moment(current).add(1, 'days');
+        }
+    });
+
+    return urls;
+}
+
+function fetchStats (from, to) {
+    var chunkUrls = getChunkStatsUrls(from, to);
 
     var progress = new ProgressBar('Fetching data: [:bar] :percent', {
-        total: monthUrls.length,
+        total: chunkUrls.length,
         width: 50,
         clear: true
     });
 
     var progressTick = progress.tick.bind(progress);
 
-    var monthStatsPromises = monthUrls.map(function (url) {
+    var chunkStatsPromises = chunkUrls.map(function (url) {
         return get(url)
-            .then(parseMonthStats)
+            .then(parseChunkStats)
             .then(progressTick);
     });
 
-    return Promise.all(monthStatsPromises);
+    return Promise.all(chunkStatsPromises);
 }
 
 function printStats () {
@@ -190,13 +202,14 @@ function printStats () {
 }
 
 (function run () {
+    var to   = moment();
+    var from = moment(to).subtract(1, 'year');
+
     if (!username)
         reportError('You should specify the username');
 
-    var contribCalendarUrl = format(CONTRIB_CALENDAR_URL_TMPL, username);
 
-    get(contribCalendarUrl)
-        .then(fetchYearStats)
+    fetchStats(from, to)
         .then(printStats)
         .catch(reportError);
 })();
