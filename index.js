@@ -7,10 +7,8 @@ var request     = require('request');
 var format      = require('util').format;
 var moment      = require('moment');
 
-require('moment-range');
-
 var CONTRIB_CHUNK_URL_TMPL = 'https://github.com/%s?tab=contributions&from=%s&to=%s';
-var DATES_PER_CHUNK        = 31;
+var DAYS_PER_CHUNK         = 31;
 
 var DATE_FORMAT = 'YYYY-MM-DD';
 
@@ -139,25 +137,18 @@ function parseChunkStats (res) {
 }
 
 function getChunkStatsUrls (from, to) {
-    var range      = moment.range(from, to);
-    var lastDayIdx = range.diff('days') + 1;
-    var idx        = 0;
-    var prev       = null;
     var urls       = [];
+    var chunkStart = from;
 
-    range.by('days', function (current) {
-        idx++;
+    while (!chunkStart.isAfter(to)) {
+        var chunkDays = Math.min(DAYS_PER_CHUNK, to.diff(chunkStart, 'days'));
+        var chunkEnd  = moment(chunkStart).add(chunkDays, 'days');
+        var url       = format(CONTRIB_CHUNK_URL_TMPL, username, chunkStart.format(DATE_FORMAT), chunkEnd.format(DATE_FORMAT));
 
-        if (idx === 1)
-            prev = current;
+        urls.push(url);
 
-        if (idx % DATES_PER_CHUNK === 0 || idx === lastDayIdx) {
-            var url = format(CONTRIB_CHUNK_URL_TMPL, username, prev.format(DATE_FORMAT), current.format(DATE_FORMAT));
-
-            urls.push(url);
-            prev = moment(current).add(1, 'days');
-        }
-    });
+        chunkStart = chunkEnd.add(1, 'days');
+    }
 
     return urls;
 }
@@ -183,20 +174,23 @@ function fetchStats (from, to) {
 }
 
 function printStats () {
+    var total = commitsTotal + pullRequestsTotal + issuesTotal;
+
     var table = new Table({
-        head:      ['Project', 'C', 'PR', 'I'],
-        colWidths: [50, 6, 6, 6]
+        head:      ['Project', 'Comm', 'PR', 'Iss', 'Total'],
+        colWidths: [40, 6, 6, 6, 7]
     });
 
     Object.keys(projectStats)
         .sort()
         .forEach(function (projectName) {
-            var stats = getProjectStats(projectName);
+            var stats        = getProjectStats(projectName);
+            var projectTotal = stats.commits + stats.pullRequests + stats.issues;
 
-            table.push([projectName, stats.commits, stats.pullRequests, stats.issues]);
+            table.push([projectName, stats.commits, stats.pullRequests, stats.issues, projectTotal]);
         });
 
-    table.push([chalk.blue('Total'), commitsTotal, pullRequestsTotal, issuesTotal]);
+    table.push([chalk.blue('Total'), commitsTotal, pullRequestsTotal, issuesTotal, total]);
 
     console.log(table.toString());
 }
