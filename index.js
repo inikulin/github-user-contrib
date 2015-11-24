@@ -7,14 +7,19 @@ var request     = require('request');
 var split       = require('split-array');
 var format      = require('util').format;
 
-var USER_PAGE_URL_TMPL     = 'https://github.com/%s';
-var CONTRIB_MONTH_URL_TMPL = 'https://github.com/%s?tab=contributions&from=%s&to=%s';
+var CONTRIB_CALENDAR_URL_TMPL = 'https://github.com/users/%s/contributions';
+var CONTRIB_MONTH_URL_TMPL    = 'https://github.com/%s?tab=contributions&from=%s&to=%s';
 
-var DAY_SELECTOR    = 'rect.day';
-var HEADER_SELECTOR = 'h3.conversation-list-heading';
+var DAY_SELECTOR          = 'rect.day';
+var HEADER_SELECTOR       = 'h3.conversation-list-heading';
+var LIST_SELECTOR         = '.simple-conversation-list';
+var PROJECT_NAME_SELECTOR = 'span.cmeta';
 
-var COMMIT_HEADER_TEXT_RE = /\d+ commits?/;
-var COMMIT_TEXT_RE        = /Pushed (\d+) commits? to (.+)/;
+var COMMIT_HEADER_TEXT_RE       = /\d+ commits?/i;
+var PULL_REQUEST_HEADER_TEXT_RE = /\d+ pull requests?/i;
+var ISSUES_HEADER_TEXT_RE       = /\d+ issues? reported/i;
+
+var COMMIT_TEXT_RE = /Pushed (\d+) commits? to (.+)/;
 
 var username = process.argv[2];
 
@@ -26,26 +31,34 @@ var projectStats = {};
 
 function get (url) {
     return new Promise(function (resolve, reject) {
-        request({
+        var opts = {
             url:     url,
             forever: true
-        }, function (err, res) {
+        };
+
+        request(opts, function (err, res) {
             if (err)
                 reject(err);
 
-            if (res.statusCode === 429)
-                error('Too many requests to GitHub. Please, wait a minute and try again.');
+            else if (res.statusCode === 429)
+                reject('Too many requests to GitHub. Please, wait a minute and try again.');
 
-            if (res.statusCode !== 200)
-                error('GitHub responded with status code ' + res.statusCode);
+            else if (res.statusCode === 404)
+                reject('Unknown username "' + username + '".');
 
-            resolve(res);
+            else if (res.statusCode !== 200)
+                reject('GitHub responded with status code ' + res.statusCode + '.');
+
+            else
+                resolve(res);
         });
     });
 }
 
-function error (text) {
-    console.error('\n' + chalk.red.bold('ERROR') + ' ' + text);
+function reportError (err) {
+    var msg = typeof err === 'string' ? err : err.message + '\n' + err.stack;
+
+    console.error('\n' + chalk.red.bold('ERROR') + ' ' + msg);
     process.exit(1);
 }
 
@@ -63,7 +76,7 @@ function getProjectStats (projectName) {
     return projectStats[projectName];
 }
 
-function getMonthContribInfoUrls (userPageBody) {
+function getMonthStatsUrls (userPageBody) {
     var $ = cheerio.load(userPageBody);
 
     var days = $(DAY_SELECTOR)
@@ -73,21 +86,24 @@ function getMonthContribInfoUrls (userPageBody) {
         .get()
         .sort();
 
-    return split(days, 30)
-        .map(function (month) {
-            return format(CONTRIB_MONTH_URL_TMPL, username, month[0], month[month.length - 1]);
-        });
+    return split(days, 30).map(function (month) {
+        return format(CONTRIB_MONTH_URL_TMPL, username, month[0], month[month.length - 1]);
+    });
 }
 
-function parseMonthCommits ($) {
-    var $commits = $(HEADER_SELECTOR)
+function getListItems ($, headerTextRe) {
+    return $(HEADER_SELECTOR)
         .filter(function (idx, el) {
             var headerText = $(el).text();
 
-            return COMMIT_HEADER_TEXT_RE.test(headerText);
+            return headerTextRe.test(headerText);
         })
-        .next('ul')
+        .next(LIST_SELECTOR)
         .find('li');
+}
+
+function parseMonthCommits ($) {
+    var $commits = getListItems($, COMMIT_HEADER_TEXT_RE);
 
     commitsTotal += $commits.length;
 
@@ -100,14 +116,42 @@ function parseMonthCommits ($) {
     });
 }
 
+function parseMonthPullRequests ($) {
+    var $prs = getListItems($, PULL_REQUEST_HEADER_TEXT_RE);
+
+    pullRequestsTotal += $prs.length;
+
+    $prs.each(function (idx, el) {
+        var projectName = $(el).find(PROJECT_NAME_SELECTOR).text();
+        var stats       = getProjectStats(projectName);
+
+        stats.pullRequests++;
+    });
+}
+
+function parseMonthIssues ($) {
+    var $issues = getListItems($, ISSUES_HEADER_TEXT_RE);
+
+    issuesTotal += $issues.length;
+
+    $issues.each(function (idx, el) {
+        var projectName = $(el).find(PROJECT_NAME_SELECTOR).text();
+        var stats       = getProjectStats(projectName);
+
+        stats.issues++;
+    });
+}
+
 function parseMonthStats (res) {
     var $ = cheerio.load(res.body);
 
     parseMonthCommits($);
+    parseMonthPullRequests($);
+    parseMonthIssues($);
 }
 
-function fetchYearStats (userPageBody) {
-    var monthUrls = getMonthContribInfoUrls(userPageBody);
+function fetchYearStats (calendarPageRes) {
+    var monthUrls = getMonthStatsUrls(calendarPageRes.body);
 
     var progress = new ProgressBar('Fetching data: [:bar] :percent', {
         total: monthUrls.length,
@@ -140,25 +184,20 @@ function printStats () {
             table.push([projectName, stats.commits, stats.pullRequests, stats.issues]);
         });
 
+    table.push([chalk.blue('Total'), commitsTotal, pullRequestsTotal, issuesTotal]);
+
     console.log(table.toString());
 }
 
 (function run () {
     if (!username)
-        error('You should specify the username');
+        reportError('You should specify the username');
 
-    var userPageUrl = format(USER_PAGE_URL_TMPL, username);
+    var contribCalendarUrl = format(CONTRIB_CALENDAR_URL_TMPL, username);
 
-    get(userPageUrl)
-        .then(function (res) {
-            if (res.statusCode === 404)
-                error('Unknown username "' + username + '"');
-
-            return fetchYearStats(res.body);
-        })
+    get(contribCalendarUrl)
+        .then(fetchYearStats)
         .then(printStats)
-        .catch(function (err) {
-            error(err.message + '\n' + err.stack);
-        });
+        .catch(reportError);
 })();
 
