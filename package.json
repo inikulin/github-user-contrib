@@ -1,7 +1,7 @@
 {
-  "name": "github-year",
+  "name": "github-contrib",
   "version": "1.0.0",
-  "description": "Get GitHub user year summary.",
+  "description": "Get GitHub user contribution info.",
   "main": "index.js",
   "dependencies": {
     "chalk": "^1.1.1",

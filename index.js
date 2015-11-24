@@ -105,14 +105,14 @@ function getListItems ($, headerTextRe) {
 function parseMonthCommits ($) {
     var $commits = getListItems($, COMMIT_HEADER_TEXT_RE);
 
-    commitsTotal += $commits.length;
-
     $commits.each(function (idx, el) {
-        var text  = $(el).find('a').text();
-        var match = text.match(COMMIT_TEXT_RE);
-        var stats = getProjectStats(match[2]);
+        var text    = $(el).find('a').text();
+        var match   = text.match(COMMIT_TEXT_RE);
+        var stats   = getProjectStats(match[2]);
+        var commits = parseInt(match[1], 10);
 
-        stats.commits += parseInt(match[1], 10);
+        commitsTotal += commits;
+        stats.commits += commits;
     });
 }
 
