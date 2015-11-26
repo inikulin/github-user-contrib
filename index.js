@@ -4,17 +4,22 @@ var Table       = require('cli-table');
 var cheerio     = require('cheerio');
 var chalk       = require('chalk');
 var request     = require('request');
-var format      = require('util').format;
 var moment      = require('moment');
+var format      = require('util').format;
+var resolveUrl  = require('url').resolve;
 
+var GITHUB_URL             = 'https://github.com';
+var COMMITS_URL_TEMPLATE   = 'https://github.com/inikulin/%s/commits?author=%s';
 var CONTRIB_CHUNK_URL_TMPL = 'https://github.com/%s?tab=contributions&from=%s&to=%s';
-var DAYS_PER_CHUNK         = 31;
 
-var DATE_FORMAT = 'YYYY-MM-DD';
+var DAYS_PER_CHUNK = 31;
+var DATE_FORMAT    = 'YYYY-MM-DD';
 
 var HEADER_SELECTOR       = 'h3.conversation-list-heading';
 var LIST_SELECTOR         = '.simple-conversation-list';
 var PROJECT_NAME_SELECTOR = 'span.cmeta';
+var ITEM_TITLE_SELECTOR   = 'a.title';
+var ITEM_STATE_SELECTOR   = 'span.state';
 
 var COMMIT_HEADER_TEXT_RE       = /\d+ commits?/i;
 var PULL_REQUEST_HEADER_TEXT_RE = /\d+ pull requests?/i;
@@ -24,11 +29,12 @@ var COMMIT_TEXT_RE = /Pushed (\d+) commits? to (.+)/;
 
 var username = process.argv[2];
 
-var commitsTotal      = 0;
-var pullRequestsTotal = 0;
-var issuesTotal       = 0;
-
-var projectStats = {};
+var stats = {
+    commitsTotal:      0,
+    pullRequestsTotal: 0,
+    issuesTotal:       0,
+    projectStats:      {}
+};
 
 function get (url) {
     return new Promise(function (resolve, reject) {
@@ -66,15 +72,19 @@ function reportError (err) {
 function getProjectStats (projectName) {
     projectName = projectName.trim();
 
-    if (!projectStats[projectName]) {
-        projectStats[projectName] = {
-            commits:      0,
-            pullRequests: 0,
-            issues:       0
+    if (!stats.projectStats[projectName]) {
+        stats.projectStats[projectName] = {
+            commits: {
+                count: 0,
+                url:   format(COMMITS_URL_TEMPLATE, projectName, username)
+            },
+
+            pullRequests: [],
+            issues:       []
         };
     }
 
-    return projectStats[projectName];
+    return stats.projectStats[projectName];
 }
 
 function getListItems ($, headerTextRe) {
@@ -92,39 +102,45 @@ function parseCommits ($) {
     var $commits = getListItems($, COMMIT_HEADER_TEXT_RE);
 
     $commits.each(function (idx, el) {
-        var text    = $(el).find('a').text();
-        var match   = text.match(COMMIT_TEXT_RE);
-        var stats   = getProjectStats(match[2]);
-        var commits = parseInt(match[1], 10);
+        var text         = $(el).find('a').text();
+        var match        = text.match(COMMIT_TEXT_RE);
+        var projectStats = getProjectStats(match[2]);
+        var commitCount  = parseInt(match[1], 10);
 
-        commitsTotal += commits;
-        stats.commits += commits;
+        stats.commitsTotal += commitCount;
+        projectStats.commits.count += commitCount;
+    });
+}
+
+function parseVariedStateItem ($el, statsType) {
+    var $title       = $el.find(ITEM_TITLE_SELECTOR);
+    var projectName  = $el.find(PROJECT_NAME_SELECTOR).text();
+    var projectStats = getProjectStats(projectName);
+
+    projectStats[statsType].push({
+        title: $title.text(),
+        url:   resolveUrl(GITHUB_URL, $title.attr('href')),
+        state: $el.find(ITEM_STATE_SELECTOR).text()
     });
 }
 
 function parsePullRequests ($) {
     var $prs = getListItems($, PULL_REQUEST_HEADER_TEXT_RE);
 
-    pullRequestsTotal += $prs.length;
+    stats.pullRequestsTotal += $prs.length;
 
     $prs.each(function (idx, el) {
-        var projectName = $(el).find(PROJECT_NAME_SELECTOR).text();
-        var stats       = getProjectStats(projectName);
-
-        stats.pullRequests++;
+        parseVariedStateItem($(el), 'pullRequests');
     });
 }
 
 function parseIssues ($) {
     var $issues = getListItems($, ISSUES_HEADER_TEXT_RE);
 
-    issuesTotal += $issues.length;
+    stats.issuesTotal += $issues.length;
 
     $issues.each(function (idx, el) {
-        var projectName = $(el).find(PROJECT_NAME_SELECTOR).text();
-        var stats       = getProjectStats(projectName);
-
-        stats.issues++;
+        parseVariedStateItem($(el), 'issues');
     });
 }
 
@@ -174,23 +190,35 @@ function fetchStats (from, to) {
 }
 
 function printStats () {
-    var total = commitsTotal + pullRequestsTotal + issuesTotal;
-
     var table = new Table({
         head:      ['Project', 'Comm', 'PR', 'Iss', 'Total'],
         colWidths: [40, 6, 6, 6, 7]
     });
 
-    Object.keys(projectStats)
+    Object.keys(stats.projectStats)
         .sort()
         .forEach(function (projectName) {
-            var stats        = getProjectStats(projectName);
-            var projectTotal = stats.commits + stats.pullRequests + stats.issues;
+            var projectStats = getProjectStats(projectName);
+            var projectTotal = projectStats.commits.count + projectStats.pullRequests.length +
+                               projectStats.issues.length;
 
-            table.push([projectName, stats.commits, stats.pullRequests, stats.issues, projectTotal]);
+            table.push([
+                projectName,
+                projectStats.commits.count,
+                projectStats.pullRequests.length,
+                projectStats.issues.length, projectTotal
+            ]);
         });
 
-    table.push([chalk.blue('Total'), commitsTotal, pullRequestsTotal, issuesTotal, total]);
+    var total = stats.commitsTotal + stats.pullRequestsTotal + stats.issuesTotal;
+
+    table.push([
+        chalk.blue('Total'),
+        stats.commitsTotal,
+        stats.pullRequestsTotal,
+        stats.issuesTotal,
+        total
+    ]);
 
     console.log(table.toString());
 }
