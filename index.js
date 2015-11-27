@@ -5,6 +5,9 @@ var cheerio     = require('cheerio');
 var chalk       = require('chalk');
 var request     = require('request');
 var moment      = require('moment');
+var repeat      = require('repeat-string');
+var windowWidth = require('window-size').width;
+var wordwrap    = require('wordwrap');
 var format      = require('util').format;
 var resolveUrl  = require('url').resolve;
 
@@ -26,6 +29,12 @@ var PULL_REQUEST_HEADER_TEXT_RE = /\d+ pull requests?/i;
 var ISSUES_HEADER_TEXT_RE       = /\d+ issues? reported/i;
 
 var COMMIT_TEXT_RE = /Pushed (\d+) commits? to (.+)/;
+
+var ITEM_STATE_STYLE = {
+    open:   chalk.green,
+    closed: chalk.red,
+    merged: chalk.blue
+};
 
 var username = process.argv[2];
 
@@ -118,9 +127,9 @@ function parseVariedStateItem ($el, statsType) {
     var projectStats = getProjectStats(projectName);
 
     projectStats[statsType].push({
-        title: $title.text(),
+        title: $title.text().trim(),
         url:   resolveUrl(GITHUB_URL, $title.attr('href')),
-        state: $el.find(ITEM_STATE_SELECTOR).text()
+        state: $el.find(ITEM_STATE_SELECTOR).text().trim().toLowerCase()
     });
 }
 
@@ -189,7 +198,7 @@ function fetchStats (from, to) {
     return Promise.all(chunkStatsPromises);
 }
 
-function printStats () {
+function printTable () {
     var table = new Table({
         head:      ['Project', 'Comm', 'PR', 'Iss', 'Total'],
         colWidths: [40, 6, 6, 6, 7]
@@ -199,7 +208,8 @@ function printStats () {
         .sort()
         .forEach(function (projectName) {
             var projectStats = getProjectStats(projectName);
-            var projectTotal = projectStats.commits.count + projectStats.pullRequests.length +
+            var projectTotal = projectStats.commits.count +
+                               projectStats.pullRequests.length +
                                projectStats.issues.length;
 
             table.push([
@@ -223,16 +233,70 @@ function printStats () {
     console.log(table.toString());
 }
 
+function printVariedStateItem (item) {
+    var stateStyle = ITEM_STATE_STYLE[item.state];
+    var wrap       = wordwrap(4, windowWidth);
+
+    console.log(stateStyle('   ' + item.state.toUpperCase()));
+    console.log(wrap(chalk.gray(item.title)));
+    console.log('    [' + chalk.gray.underline(item.url) + ']');
+}
+
+function printVerbose () {
+    Object.keys(stats.projectStats)
+        .sort()
+        .forEach(function (projectName) {
+            var projectStats = getProjectStats(projectName);
+            var projectTotal = projectStats.commits.count +
+                               projectStats.pullRequests.length +
+                               projectStats.issues.length;
+
+            var projectNameText = projectName + ' (' + projectTotal + ')';
+
+            console.log(chalk.bold(' ' + projectNameText));
+            console.log(' ' + repeat('-', projectNameText.length));
+
+            if (projectStats.commits.count) {
+                console.log(' ' + chalk.magenta('Commits (' + projectStats.commits.count + '):'));
+                console.log('   ' + chalk.gray.underline(projectStats.commits.url));
+                console.log();
+            }
+
+            if (projectStats.pullRequests.length) {
+                console.log(' ' + chalk.magenta('Pull requests (' + projectStats.pullRequests.length + '):'));
+                projectStats.pullRequests.forEach(printVariedStateItem);
+                console.log();
+            }
+
+            if (projectStats.issues.length) {
+                console.log(' ' + chalk.magenta('Issues (' + projectStats.issues.length + '):'));
+                projectStats.issues.forEach(printVariedStateItem);
+                console.log();
+            }
+        });
+
+    console.log(repeat('-', windowWidth - 1));
+
+    var total = stats.commitsTotal + stats.pullRequestsTotal + stats.issuesTotal;
+
+    console.log(
+        chalk.cyan('TOTAL (' + total + '):') +
+        ' commits (' + chalk.gray(stats.commitsTotal) + '),' +
+        ' pull requests (' + chalk.gray(stats.pullRequestsTotal) + '),' +
+        ' issues (' + chalk.gray(stats.issuesTotal) + ')'
+    );
+}
+
 (function run () {
     var to   = moment();
-    var from = moment(to).subtract(1, 'year');
+    var from = moment(to).subtract(1, 'month');
 
     if (!username)
         reportError('You should specify the username');
 
 
     fetchStats(from, to)
-        .then(printStats)
+        .then(printVerbose)
         .catch(reportError);
 })();
 
