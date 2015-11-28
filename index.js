@@ -6,10 +6,11 @@ var chalk       = require('chalk');
 var request     = require('request');
 var moment      = require('moment');
 var repeat      = require('repeat-string');
-var windowWidth = require('window-size').width;
+var windowSize  = require('window-size');
 var wordwrap    = require('wordwrap');
 var format      = require('util').format;
 var resolveUrl  = require('url').resolve;
+
 
 var GITHUB_URL             = 'https://github.com';
 var COMMITS_URL_TEMPLATE   = 'https://github.com/inikulin/%s/commits?author=%s';
@@ -27,8 +28,7 @@ var ITEM_STATE_SELECTOR   = 'span.state';
 var COMMIT_HEADER_TEXT_RE       = /\d+ commits?/i;
 var PULL_REQUEST_HEADER_TEXT_RE = /\d+ pull requests?/i;
 var ISSUES_HEADER_TEXT_RE       = /\d+ issues? reported/i;
-
-var COMMIT_TEXT_RE = /Pushed (\d+) commits? to (.+)/;
+var COMMIT_TEXT_RE              = /Pushed (\d+) commits? to (.+)/;
 
 var ITEM_STATE_STYLE = {
     open:   chalk.green,
@@ -36,7 +36,8 @@ var ITEM_STATE_STYLE = {
     merged: chalk.blue
 };
 
-var username = process.argv[2];
+var username    = process.argv[2];
+var windowWidth = process.stdout.isTTY ? windowSize.width : 80;
 
 var stats = {
     commitsTotal:      0,
@@ -287,9 +288,13 @@ function printVerbose () {
     );
 }
 
+function printJSON () {
+    console.log(JSON.stringify(stats));
+}
+
 (function run () {
     var to   = moment();
-    var from = moment(to).subtract(1, 'month');
+    var from = moment(to).subtract(1, 'year');
 
     if (!username)
         reportError('You should specify the username');
